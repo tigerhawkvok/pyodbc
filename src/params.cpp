@@ -92,7 +92,7 @@ static int DetectCType(PyObject *cell, ParamInfo *pi)
     Type_Unicode:
         // Assume the SQL type is also wide character.
         // If it is a max-type (ColumnSize == 0), use DAE.
-        pi->ValueType = SQL_C_WCHAR;
+        pi->ValueType = cur->cnxn->unicode_enc.ctype; // defaults to SQL_C_WCHAR;
         pi->BufferLength = pi->ColumnSize ? pi->ColumnSize * sizeof(SQLWCHAR) : sizeof(DAEParam);
     }
     else if (PyDateTime_Check(cell))
@@ -322,14 +322,12 @@ static int PyToCType(Cursor *cur, unsigned char **outbuf, PyObject *cell, ParamI
     }
     else if (PyUnicode_Check(cell))
     {
-        if (pi->ValueType != SQL_C_WCHAR)
-            return false;
-
+        const TextEnc& enc = cur->cnxn->unicode_enc;
         Py_ssize_t len = PyUnicode_GET_SIZE(cell);
         //         Same size      Different size
         // DAE     DAE only       Convert + DAE
         // non-DAE Copy           Convert + Copy
-        if (sizeof(Py_UNICODE) != sizeof(SQLWCHAR))
+        if (sizeof(Py_UNICODE) != sizeof(SQLWCHAR) || strcmp(enc.name, "utf-16le")))
         {
             const TextEnc& enc = cur->cnxn->unicode_enc;
             Object encoded(PyCodec_Encode(cell, enc.name, "strict"));
@@ -480,7 +478,7 @@ static int PyToCType(Cursor *cur, unsigned char **outbuf, PyObject *cell, ParamI
             return false;
         const char* pb;
         Py_ssize_t  len = PyBuffer_GetMemory(cell, &pb);
-        if (len < 0)
+        if (!pi->ColumnSize || len < 0)
         {
             // DAE
             DAEParam *pParam = (DAEParam*)*outbuf;
