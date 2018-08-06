@@ -37,7 +37,7 @@ struct DAEParam
 // Detects and sets the appropriate C type to use for binding the specified Python object.
 // Also sets the buffer length to use.
 // Returns false if unsuccessful.
-static int DetectCType(PyObject *cell, ParamInfo *pi)
+static int DetectCType(Cursor *cur, PyObject *cell, ParamInfo *pi)
 {
     PyObject* cls = 0;
     if (PyBool_Check(cell))
@@ -327,7 +327,7 @@ static int PyToCType(Cursor *cur, unsigned char **outbuf, PyObject *cell, ParamI
         //         Same size      Different size
         // DAE     DAE only       Convert + DAE
         // non-DAE Copy           Convert + Copy
-        if (sizeof(Py_UNICODE) != sizeof(SQLWCHAR) || strcmp(enc.name, "utf-16le")))
+        if (sizeof(Py_UNICODE) != sizeof(SQLWCHAR) || strcmp(enc.name, "utf-16le"))
         {
             const TextEnc& enc = cur->cnxn->unicode_enc;
             Object encoded(PyCodec_Encode(cell, enc.name, "strict"));
@@ -1518,7 +1518,7 @@ bool ExecuteMulti(Cursor* cur, PyObject* pSql, PyObject* paramArrayObj)
         Py_ssize_t i = 0;
         for (; i < cur->paramcount; i++)
         {
-            if (!DetectCType(cells[i], &cur->paramInfos[i]))
+          if (!DetectCType(cur, cells[i], &cur->paramInfos[i]))
             {
                 goto ErrorRet3;
             }
