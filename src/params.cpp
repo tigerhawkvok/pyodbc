@@ -92,7 +92,7 @@ static int DetectCType(PyObject *cell, ParamInfo *pi)
     Type_Unicode:
         // Assume the SQL type is also wide character.
         // If it is a max-type (ColumnSize == 0), use DAE.
-        pi->ValueType = SQL_C_WCHAR;
+        pi->ValueType = cur->cnxn->unicode_enc.ctype; // defaults to SQL_C_WCHAR;
         pi->BufferLength = pi->ColumnSize ? pi->ColumnSize * sizeof(SQLWCHAR) : sizeof(DAEParam);
     }
     else if (PyDateTime_Check(cell))
@@ -322,14 +322,12 @@ static int PyToCType(Cursor *cur, unsigned char **outbuf, PyObject *cell, ParamI
     }
     else if (PyUnicode_Check(cell))
     {
-        if (pi->ValueType != SQL_C_WCHAR)
-            return false;
-
+        const TextEnc& enc = cur->cnxn->unicode_enc;
         Py_ssize_t len = PyUnicode_GET_SIZE(cell);
         //         Same size      Different size
         // DAE     DAE only       Convert + DAE
         // non-DAE Copy           Convert + Copy
-        if (sizeof(Py_UNICODE) != sizeof(SQLWCHAR))
+        if (sizeof(Py_UNICODE) != sizeof(SQLWCHAR) || strcmp(enc.name, "utf-16le")))
         {
             const TextEnc& enc = cur->cnxn->unicode_enc;
             Object encoded(PyCodec_Encode(cell, enc.name, "strict"));
@@ -480,7 +478,7 @@ static int PyToCType(Cursor *cur, unsigned char **outbuf, PyObject *cell, ParamI
             return false;
         const char* pb;
         Py_ssize_t  len = PyBuffer_GetMemory(cell, &pb);
-        if (len < 0)
+        if (!pi->ColumnSize || len < 0)
         {
             // DAE
             DAEParam *pParam = (DAEParam*)*outbuf;
@@ -1677,30 +1675,32 @@ bool ExecuteMulti(Cursor* cur, PyObject* pSql, PyObject* paramArrayObj)
             if (rc == SQL_NEED_DATA)
             {
                 szLastFunction = "SQLPutData";
-                if (PyBytes_Check(pInfo->cell))
-                {
-                    const char* p = PyBytes_AS_STRING(pInfo->cell);
-                    SQLLEN offset = 0;
-                    SQLLEN cb = (SQLLEN)PyBytes_GET_SIZE(pInfo->cell);
-                    while (offset < cb)
-                    {
-                        SQLLEN remaining = min(pInfo->maxlen, cb - offset);
-                        TRACE("SQLPutData [%d] (%d) %.10s\n", offset, remaining, &p[offset]);
-                        Py_BEGIN_ALLOW_THREADS
-                        rc = SQLPutData(cur->hstmt, (SQLPOINTER)&p[offset], remaining);
-                        Py_END_ALLOW_THREADS
-                        if (!SQL_SUCCEEDED(rc))
-                            return RaiseErrorFromHandle(cur->cnxn, "SQLPutData", cur->cnxn->hdbc, cur->hstmt);
-                        offset += remaining;
-                    }
-                }
+                if (PyBytes_Check(pInfo->cell)
     #if PY_VERSION_HEX >= 0x02060000
-                else if (PyByteArray_Check(pInfo->cell))
+                 || PyByteArray_Check(pInfo->cell)
+    #endif
+                )
                 {
-                    const char* p = PyByteArray_AS_STRING(pInfo->cell);
+                    char *(*pGetPtr)(PyObject*);
+                    Py_ssize_t (*pGetLen)(PyObject*);
+    #if PY_VERSION_HEX >= 0x02060000
+                    if (PyByteArray_Check(pInfo->cell))
+                    {
+                        pGetPtr = PyByteArray_AsString;
+                        pGetLen = PyByteArray_Size;
+                    }
+                    else
+    #endif
+                    {
+                        pGetPtr = PyBytes_AsString;
+                        pGetLen = PyBytes_Size;
+                    }
+
+                    const char* p = pGetPtr(pInfo->cell);
+                    SQLLEN cb = (SQLLEN)pGetLen(pInfo->cell);
                     SQLLEN offset = 0;
-                    SQLLEN cb     = (SQLLEN)PyByteArray_GET_SIZE(pInfo->cell);
-                    while (offset < cb)
+
+                    do
                     {
                         SQLLEN remaining = min(pInfo->maxlen, cb - offset);
                         TRACE("SQLPutData [%d] (%d) %.10s\n", offset, remaining, &p[offset]);
@@ -1711,8 +1711,8 @@ bool ExecuteMulti(Cursor* cur, PyObject* pSql, PyObject* paramArrayObj)
                             return RaiseErrorFromHandle(cur->cnxn, "SQLPutData", cur->cnxn->hdbc, cur->hstmt);
                         offset += remaining;
                     }
+                    while (offset < cb);
                 }
-    #endif
     #if PY_MAJOR_VERSION < 3
                 else if (PyBuffer_Check(pInfo->cell))
                 {
