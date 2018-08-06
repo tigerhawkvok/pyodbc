@@ -1,0 +1,4 @@
+Metadata-Version: 1.1
+Version: 4.0.22.1
+Name: PyODBC
+Summary: Attempted function-sequence-0 error patch: (pyodbc.Error) ('HY010', '[HY010] [Microsoft][ODBC Driver 17 for SQL Server]Function sequence error (0) (SQLParamData)') 
